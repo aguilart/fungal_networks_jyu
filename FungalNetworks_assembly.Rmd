@@ -1,0 +1,683 @@
+
+# Loading the data
+
+```{r}
+rm(list = ls()); gc()
+library(readxl)
+library(tidyverse)
+library(moments)
+library(igraph)
+
+# Specify the folder
+#data_location2 <- "C:/Users/mafekete/Dropbox/fungi/results_after_clearing/"
+
+data_location2 <- "C:/Users/caaguila/OneDrive - Jyväskylän yliopisto/Documents - Fungal Networks and soil carbon/Poppy_seeds_experiments/camera images/processed data/results/"
+```
+
+
+Calling the data
+
+```{r}
+temp2 <- list.files(path = data_location2, pattern ="*-results.xlsx")
+temp <- paste(data_location2, temp2, sep = "")
+Edge_Traits <- lapply(temp,function(x){read_excel(x,sheet = "Edges")} )
+Node_Traits <- lapply(temp,function(x){read_excel(x,sheet = "Nodes")} )
+saveRDS(Edge_Traits, paste(data_location2, "Edge_Traits.RDS", sep = ""))
+saveRDS(Node_Traits, paste(data_location2, "Node_Traits.RDS", sep = ""))
+
+
+```
+If they are already made above
+
+```{r}
+rm(list = ls()); gc()
+
+library(readxl)
+library(tidyverse)
+library(moments)
+library(igraph)
+
+# Selected ones
+
+#data_location2 <-  "C:/Users/mafekete/Dropbox/fungi/results_inoculation21022025_time1/"
+
+temp2 <- list.files(path = data_location2, pattern ="*-results.xlsx")
+temp <- paste(data_location2, temp2, sep = "")
+
+Edge_Traits <- readRDS(paste(data_location2, "Edge_Traits.RDS", sep = ""))
+Node_Traits <- readRDS(paste(data_location2, "Node_Traits.RDS", sep = ""))
+```
+
+Run in the console only!
+```{r}
+Node_Traits_c <-
+  lapply(Node_Traits,function(prueba){
+    
+    prueba$min_angle<-apply(
+      prueba[,c("node_Omin_Omaj","node_Omid_Omaj","node_Omin_Omid")],1,
+      function(x){y<-min(x,na.rm=T)})
+    
+    prueba$min_angle[which(prueba$min_angle=="Inf")]<-NA
+    prueba
+  })
+
+all(Node_Traits_c[[1]]$node_Strength==Node_Traits[[1]]$node_Strength)
+Node_Traits<-Node_Traits_c;rm(Node_Traits_c)
+#saveRDS(Node_Traits, paste(data_location2, "Node_Traits.RDS", sep = ""))
+```
+
+#Transforming it into igraph object
+
+
+```{r}
+#Transforming it into igraph object
+
+colonies_ntwk <-
+  
+  mapply(function(x,z){
+    y<-graph_from_edgelist(as.matrix(x[,c("EndNodes_1","EndNodes_2")]),directed = F)
+    E(y)$name<-x$name
+    E(y)$edge_id <- x$Name
+    E(y)$weight<-x$Resistance_2ave
+    E(y)$length<-x$Length
+    E(y)$width<-x$Width
+    E(y)$Volume <- x$Volume
+    
+    V(y)$Degrees<-degree(y)
+    V(y)$Accessibility <- distances(y,v=as.numeric(V(y)[Degrees==max(V(y)$Degrees)])
+                                  
+                                  
+    )
+    V(y)$node_ID<-z$node_ID
+    #V(y)$angle<-z$node_Omin_Omid
+    V(y)$angle<-z$min_angle
+    
+    E(y)$type<-"Main"
+    
+    E(y)$e_distance<-(x$Length/x$Tortuosity)
+    
+    E(y)[incident(y,
+                  as.numeric(V(y)[Degrees==max(V(y)$Degrees)])
+    )]$type<-"Inoculum"
+    
+    y
+  },Edge_Traits, Node_Traits, SIMPLIFY = F)
+
+
+#saveRDS(Edge_Traits, paste(data_location2, "Edge_Traits.RDS", sep = "")); rm(Edge_Traits); gc()
+
+# Spatial location
+spatial.data <- lapply(Node_Traits,function(x){x[,c("node_ID","node_X_pix","node_Y_pix","name")]})
+
+spatial.data <- lapply(spatial.data,function(l){as.matrix(l[,c(2,3)])})
+spatial.data <- lapply(spatial.data,function(l){norm_coords(l, ymin=-1, ymax=1, xmin=-1, xmax=1)})
+
+#Calculatig the MST
+
+colonies_ntwk <-
+lapply(colonies_ntwk,
+       function(x){E(x)$weight[E(x)$type == "Inoculum"] <- 0
+x})
+
+Access_mst <-
+  lapply(colonies_ntwk,
+         mst)
+
+```
+
+Identifying which network traits belong to the MST and which ones do not
+
+
+```{r}
+
+colonies_ntwk <-
+  
+  mapply(function(g,ms_t){
+    
+      # Assign the attribute to the edges in the graph
+    E(g)$in_mst <- (E(g)$edge_id%in%E(ms_t)$edge_id)
+    g
+    
+  },colonies_ntwk, Access_mst, SIMPLIFY = F)
+
+```
+
+
+
+```{r}
+saveRDS(Access_mst, paste(data_location2, "Access_mst.RDS", sep = ""))
+#saveRDS(Node_Traits, paste(data_location2, "Node_Traits.RDS", sep = "")); rm(Node_Traits); gc()
+saveRDS(spatial.data, paste(data_location2, "spatial.data.RDS", sep = "")); rm(spatial.data)
+saveRDS(colonies_ntwk, paste(data_location2, "colonies_ntwk.RDS", sep = ""))
+```
+
+
+Calculating the summary values for each colony
+
+Load in case they were done already
+
+```{r, message=FALSE, warning=FALSE}
+rm(list = ls());gc()
+
+#data_location2 <- "C:/Users/mafekete/Dropbox/fungi/results_inoculation21022025_time1/"
+
+temp2 <- list.files(path = data_location2, pattern ="*-results.xlsx")
+temp <- paste(data_location2, temp2, sep = "")
+
+colonies_ntwk <- readRDS(paste(data_location2, "colonies_ntwk.RDS", sep = ""))
+
+Access_mst <- readRDS(paste(data_location2, "Access_mst.RDS", sep = ""))
+
+```
+
+
+```{r, message=FALSE, warning=FALSE}
+
+#Calculating the summary values for each colony
+
+colony_sum <- do.call("rbind",
+                    
+                    lapply(
+                      colonies_ntwk,function(x){
+                        
+                        w<-data.frame(
+                          name_col=unique(E(x)$name),
+                          alpha_coeff=(ecount(x)-vcount(x)+1)/(2*vcount(x)-5),
+                          beta_coeff=ecount(x)/vcount(x),
+                          gamma_coeff=ecount(x)/(3*vcount(x)-6),
+                          Root_eff=mean(1/V(x)[Accessibility>0]$Accessibility),
+                          Reff_tip=mean(1/V(x)[Degrees==1&Accessibility>0]$Accessibility))
+                        
+                        y<-subgraph.edges(x,E(x)[type=="Main"])
+                        
+                        E(y)$hyphae<-"main"
+                        E(y)[.inc(V(y)[Degrees==1])]$hyphae<-"tip"
+                        
+                        z <- data.frame(
+                          name_col = unique(E(y)$name),
+                          Hyphal_tip_length_median = 10^(mean(log10(E(y)[hyphae=="tip"&width>0]$length))),
+                          Hyphal_main_length_median = 10^(mean(log10(E(y)[hyphae=="main"&width>0]$length))),
+                          Hyphal_sec_length_median = 10^(mean(log10(E(y)[hyphae=="main"&width>0&in_mst==F]$length))),
+                          
+                          Hyphal_number_main = length(E(y)[hyphae == "main"]),
+                          Hyphal_number_sec = length(E(y)[hyphae == "main"&in_mst==F]),
+                          
+                          Hyphal_number_tip = length(E(y)[hyphae == "tip"]),
+                          
+                          accessibility_skewness = skewness(V(y)[Degrees>1]$Accessibility),
+                          
+                          length_skewness_tip = skewness(E(y)[hyphae=="tip"&width>0]$length),
+                          length_skewness_main = skewness(E(y)[hyphae=="main"&width>0]$length),
+                          
+                          volume_skewness_tip = skewness(E(y)[hyphae=="tip"&width>0]$Volume),
+                          volume_skewness_main = skewness(E(y)[hyphae=="main"&width>0]$Volume),
+                          
+                          width_skewness_tip = skewness(E(y)[hyphae=="tip"&width>0]$width),
+                          width_skewness_main = skewness(E(y)[hyphae=="main"&width>0]$width),
+                          
+                          Hyphal_tip_width_median = 10^(mean(log10(E(y)[hyphae=="tip"&width>0]$width))),
+                          Hyphal_main_width_median = median(E(y)[hyphae=="main"&width>0]$width),#The unstransformed looks better
+                          Hyphal_main_width_mean = mean(E(y)[hyphae=="main"&width>0]$width),
+                          Hyphal_sec_width_mean = mean(E(y)[hyphae=="main"&width>0&in_mst==F]$width),#The unstransformed
+                          
+                          
+                          Hyphal_tip_access = median(V(y)[Degrees==1]$Accessibility),
+                          Hyphal_angle = median(V(y)[which(angle>0)]$angle),
+                          
+                          Mycelia_length = sum(E(y)$length),
+                          Mycelia_Volume = sum(E(y)$Volume)
+                          
+                        )
+                        
+                        zw<-left_join(z,w)
+                        zw
+                        
+                      })
+)
+```
+
+
+```{r}
+# Calculating global efficiency
+
+library(parallel)
+library(doParallel)
+
+global_eff_no_start <-
+  function(g){
+    
+    g <- subgraph(g, V(g)[Accessibility>0])
+    
+    get_eff <- function(i){return((1/(length(V(g)) - 1))*sum(1/distances(g, V(g)[i])[-i]))}
+    no_cores <- detectCores() - 1 
+    cl       <- makeCluster(no_cores)
+    registerDoParallel(cl)  
+    result <- foreach(i = seq_along(V(g)), .combine = c, .packages = "igraph") %dopar% get_eff(i)
+    stopCluster(cl)
+    rm(cl)
+    Geff<-mean(result);Geff
+  }
+
+global_eff <-
+  function(g){
+    
+    #g <- subgraph(g, V(g)[Accessibility>0])
+    
+    get_eff <- function(i){return((1/(length(V(g)) - 1))*sum(1/distances(g, V(g)[i])[-i]))}
+    no_cores <- detectCores() - 1 
+    cl       <- makeCluster(no_cores)
+    registerDoParallel(cl)  
+    result <- foreach(i = seq_along(V(g)), .combine = c, .packages = "igraph") %dopar% get_eff(i)
+    stopCluster(cl)
+    rm(cl)
+    Geff<-mean(result);Geff
+  }
+```
+
+
+```{r}
+
+Real_summary_Geff2 <- sapply(colonies_ntwk, global_eff_no_start)
+saveRDS(Real_summary_Geff2, paste(data_location2, "global_eff2.RDS", sep = ""))
+```
+
+
+```{r}
+
+Real_summary_Geff2 <- readRDS(paste(data_location2, "global_eff2.RDS", sep = ""))
+
+colony_sum$Geff_no_c <- Real_summary_Geff2
+```
+
+Calculating summary values for the Minimum spanning tree
+
+```{r, message=FALSE, warning=FALSE}
+# Calculating MST
+
+
+#rm(colonies_ntwk); gc()
+
+# Calculating summary values (hypal traits, coefficients and efficiencies ) for the minimum spanning trees (MST´s)
+Access_mst_sum <-do.call("rbind",
+                        lapply(
+                          Access_mst,function(x){
+                            
+                            w<-data.frame(
+                              name_col=unique(E(x)$name),
+                              alpha_coeff=(ecount(x)-vcount(x)+1)/(2*vcount(x)-5),
+                              beta_coeff=ecount(x)/vcount(x),
+                              gamma_coeff=ecount(x)/(3*vcount(x)-6),
+                              Root_eff=mean(1/V(x)[Accessibility>0]$Accessibility),
+                              Reff_tip=mean(1/V(x)[Degrees==1&Accessibility>0]$Accessibility))
+                            
+                            y<-subgraph.edges(x,E(x)[type=="Main"])
+                            
+                            E(y)$hyphae<-"main"
+                            E(y)[.inc(V(y)[Degrees==1])]$hyphae<-"tip"
+                            
+                            z<-data.frame(
+                          name_col = unique(E(y)$name),
+                          Hyphal_tip_length_median = 10^(mean(log10(E(y)[hyphae=="tip"&width>0]$length))),
+                          Hyphal_main_length_median = 10^(mean(log10(E(y)[hyphae=="main"&width>0]$length))),
+                          
+                          Hyphal_number_main = length(E(y)[hyphae == "main"]),
+                          Hyphal_number_tip = length(E(y)[hyphae == "tip"]),
+                          
+                          accessibility_skewness = skewness(V(y)[Degrees>1]$Accessibility),
+                          
+                          length_skewness_tip = skewness(E(y)[hyphae=="tip"&width>0]$length),
+                          length_skewness_main = skewness(E(y)[hyphae=="main"&width>0]$length),
+                          
+                          volume_skewness_tip = skewness(E(y)[hyphae=="tip"&width>0]$Volume),
+                          volume_skewness_main = skewness(E(y)[hyphae=="main"&width>0]$Volume),
+                          
+                          width_skewness_tip = skewness(E(y)[hyphae=="tip"&width>0]$width),
+                          width_skewness_main = skewness(E(y)[hyphae=="main"&width>0]$width),
+                          
+                          Hyphal_tip_width_median = 10^(mean(log10(E(y)[hyphae=="tip"&width>0]$width))),
+                          Hyphal_main_width_median = median(E(y)[hyphae=="main"&width>0]$width),#The unstransformed looks better
+                          Hyphal_main_width_mean = mean(E(y)[hyphae=="main"&width>0]$width),#The unstransformed looks better
+                          Hyphal_tip_access = median(V(y)[Degrees==1]$Accessibility),
+                          Hyphal_angle = median(V(y)[which(angle>0)]$angle),
+                              
+                              Mycelia_length=sum(E(y)$length),
+                              Mycelia_Volume=sum(E(y)$Volume)#,
+                              
+                            )
+                            z<-left_join(z,w)
+                            
+                          })
+)
+
+
+```
+
+
+```{r}
+# Now the global efficieny of the MST
+
+
+MST_summary_Geff2 <- sapply(Access_mst, global_eff_no_start)
+saveRDS(MST_summary_Geff2, paste(data_location2, "global_MST_eff2.RDS", sep = ""))
+
+###########
+
+saveRDS(Access_mst, paste(data_location2, "Access_mst.RDS", sep = ""))
+rm(Access_mst);gc()
+```
+
+
+```{r}
+
+
+MST_summary_Geff2 <- readRDS(paste(data_location2, "global_MST_eff2.RDS", sep = ""))
+Access_mst_sum$Geff_no_c <- MST_summary_Geff2
+
+```
+
+
+```{r}
+# Summary_Tables
+summary_Traits <- lapply(temp,function(x){read_excel(x,sheet = "Summary table")} )
+
+summary_Traits_table_AZB <- bind_rows(summary_Traits)
+summary_Traits_table_AZB$name_col <- temp
+summary_Traits_table_AZB$name_col <- gsub(data_location2,"",summary_Traits_table_AZB$name_col)
+
+summary_Traits_table_AZB$name_col <- gsub("\\-results\\.xlsx","",summary_Traits_table_AZB$name_col)
+
+```
+
+
+```{r}
+### Biding the real and MST networks
+
+colony_sum$Network<-"Real"
+Access_mst_sum$Network<-"Resistance_MST"
+
+all_data <- bind_rows(colony_sum,Access_mst_sum)
+
+#all_data$Species <- str_extract(all_data$name_col, "Hf_|Rb_|Pv_|Pi_")
+
+#adding this because there are some entries in Hf and Pv that have the word "shiny"
+
+#all_data$name_col <- gsub("_shiny_", "_", all_data$name_col)
+
+all_data <- left_join(all_data,
+                    summary_Traits_table_AZB[,c("name_col","summary_mycelial_area",
+                                                #"polygons_mean_polygon_Roughness",
+                                                #"polygons_mean_polygon_Solidity",
+                                                #"polygons_mean_polygon_Circularity",
+                                                "summary_Geff","summary_Gnorm")])
+
+#Then I can just calculated edge density for all (including the MSt´s)
+
+all_data$Hyphal_density_tip <- all_data$Hyphal_number_tip/all_data$summary_mycelial_area
+all_data$Hyphal_density_main <- all_data$Hyphal_number_main/all_data$summary_mycelial_area
+
+#Changin the name of the area so it make more sense
+names(all_data)[which(names(all_data)=="summary_mycelial_area")] <- "Mycelial_area"
+
+### Scaling values from real networks by MST values
+
+l <- length(all_data$name_col)
+
+all_data_scaled <- all_data[c(1:(l/2)),]
+
+all_data_scaled$Mycelia_length_MST <- all_data[c(1:(l/2)),]$Mycelia_length/all_data[c(((l/2)+1):l),]$Mycelia_length
+
+all_data_scaled$Mycelia_Vol_MST <- all_data[c(1:(l/2)),]$Mycelia_Volume/all_data[c(((l/2)+1):l),]$Mycelia_Volume
+
+#all_data_scaled$alpha_coeff_scaled<-all_data[c(1:32),]$alpha_coeff/all_data[c(33:64),]$alpha_coeff
+#all_data_scaled$beta_coeff_scaled<-all_data[c(1:32),]$beta_coeff/all_data[c(33:64),]$beta_coeff
+all_data_scaled$Root_eff_l_scaled<-all_data[c(1:(l/2)),]$Root_eff/sqrt(all_data[c(1:(l/2)),]$Mycelial_area)
+all_data_scaled$Reff_tip_l_scaled<-all_data[c(1:(l/2)),]$Reff_tip/sqrt(all_data[c(1:(l/2)),]$Mycelial_area)
+#all_data_scaled$Geff_MST<-all_data[c(1:(l/2)),]$Geff/all_data[c(((l/2)+1):l),]$Geff
+all_data_scaled$Geff_MST<-all_data[c(1:(l/2)),]$summary_Geff/all_data[c(((l/2)+1):l),]$summary_Geff
+
+#all_data_scaled$Geff_MST_no_c <- all_data[c(1:(l/2)),]$Geff_no_c/all_data[c(((l/2)+1):l),]$Geff_no_c
+
+#all_data_scaled$phylum <- "Basidiomycota"
+```
+
+
+```{r}
+saveRDS(all_data_scaled, paste(data_location2, "all_data_scaled.RDS", sep = ""))
+saveRDS(all_data, paste(data_location2, "all_data.RDS", sep = ""))
+#saveRDS(robustness, paste(data_location2, "robustness.RDS", sep = ""))
+saveRDS(summary_Traits_table_AZB, paste(data_location2, "summary_Traits_table_AZB.RDS", sep = ""))
+```
+
+
+###### Robustness measures
+
+```{r}
+#data_location2 <- "C:/Users/mafekete/Dropbox/fungi/results_inoculation21022025_time1/"
+
+temp2 <- list.files(path = data_location2, pattern ="*-results.xlsx")
+temp <- paste(data_location2, temp2, sep = "")
+```
+
+
+```{r}
+library(DescTools)
+library(readxl)
+library(tidyverse)
+
+cv <- function(x){sd(x)/mean(x)}
+```
+
+
+Check whether this is necessary: 
+
+In the old code this was necessary. Weird that not anymore
+robustness$asc_width_robustness[which(is.na(robustness$asc_width_robustness))] <- 99
+which(is.na(ordered_AUC$Fifty_mark_adj_Width_asc))
+
+```{r}
+######################################## Random Robustness ##########################################
+
+cv <- function(x){sd(x)/mean(x)}
+
+Random_robustness <- lapply(temp,function(x){read_excel(x,sheet = "Random Robustness")})
+
+Random_AUC <- 
+  bind_rows(lapply(Random_robustness,
+                                   function(x){
+                                     y <- split(x,as.factor(x$rep))
+                                     bind_rows(lapply(y,function(y){
+                                       data.frame(
+                                         name = unique(y$name),
+                                         rep = unique(y$rep),
+                                         AUC = AUC(
+                                           y$removed_percent,
+                                           y$connected_percent,
+                                           to = 95),
+                                         AUC_adj =AUC(
+                                           y$removed_percent,
+                                           y$robustness,
+                                           to = 95),
+                                         Fifty_mark = approx(y$removed_percent, y$connected_percent)$x[
+                                           which.min(abs(approx(y$removed_percent, y$connected_percent)$y-50))],
+                                         
+                                         Fifty_mark_adj = approx(y$removed_percent, y$robustness)$x[
+                                           which.min(abs(approx(y$removed_percent, y$robustness)$y-50))]
+                                                                                  )
+                                       }))
+                                   })) %>% 
+  group_by(name) %>% 
+  summarise_at(c("AUC","AUC_adj", "Fifty_mark", "Fifty_mark_adj"),
+               list(mean = mean, cv =cv))
+
+Random_AUC$name <- gsub("_shiny_", "_", Random_AUC$name)
+saveRDS(Random_AUC, paste(data_location2,"Random_AUC.RDS", sep = ""))
+
+#########################################  Spatial Robustness #######################################################
+Spatial_robustness <- lapply(temp,function(x){read_excel(x,sheet = "Spatial Robustness")})
+
+Spatial_AUC <- 
+  bind_rows(lapply(Spatial_robustness,
+                                  function(x){
+                                    y <- split(x,as.factor(x$rep))
+                                    bind_rows(lapply(y,function(y){
+                                      data.frame(
+                                        name = unique(y$name),
+                                        rep = unique(y$rep),
+                                        AUC = AUC(
+                                          y$removed_percent,
+                                          y$connected_percent,
+                                          to = 95),
+                                        AUC_adj =AUC(
+                                          y$removed_percent,
+                                          y$robustness,
+                                          to = 95),
+                                        Fifty_mark = approx(y$removed_percent, y$connected_percent)$x[
+                                          which.min(abs(approx(y$removed_percent, y$connected_percent)$y-50))],
+                                        
+                                        Fifty_mark_adj = approx(y$removed_percent, y$robustness)$x[
+                                          which.min(abs(approx(y$removed_percent, y$robustness)$y-50))]
+                                      )
+                                    }))
+                                  })) %>% 
+  group_by(name) %>% 
+  summarise_at(c("AUC","AUC_adj", "Fifty_mark", "Fifty_mark_adj"),
+               list(mean = mean, cv =cv))
+
+Spatial_AUC$name <- gsub("_shiny_", "_", Spatial_AUC$name)
+
+saveRDS(Spatial_AUC, paste(data_location2, "Spatial_AUC.RDS", sep = ""))
+
+############################### Ordered Robustness #################################################
+Ordered_robustness <- lapply(temp,function(x){read_excel(x,sheet = "Ordered Robustness")})
+
+ordered_AUC <- 
+  bind_rows(lapply(Ordered_robustness,
+                                   function(x){
+                                     y <- split(x,as.factor(paste(x$method, x$direction)))
+                                     bind_rows(lapply(y,function(y){
+                                       data.frame(
+                                         name = unique(y$name),
+                                       method = unique(y$method),
+                                         direction = unique(y$direction),
+                                       AUC = AUC(
+                                         y$removed_percent,
+                                         y$connected_percent,
+                                         to = 95),
+                                         AUC_adj =AUC(
+                                           y$removed_percent,
+                                           y$robustness,
+                                           to = 95),
+                                       Fifty_mark = approx(y$removed_percent, y$connected_percent)$x[
+                                         which.min(abs(approx(y$removed_percent, y$connected_percent)$y-50))],
+                                       
+                                       Fifty_mark_adj = approx(y$removed_percent, y$robustness)$x[
+                                         which.min(abs(approx(y$removed_percent, y$robustness)$y-50))]
+                                       )
+                                     }))
+                                   })) %>% 
+  pivot_wider(values_from = c(AUC, AUC_adj, Fifty_mark, Fifty_mark_adj), names_from = c(method, direction))
+
+ordered_AUC$name <- gsub("_shiny_", "_", ordered_AUC$name)
+saveRDS(ordered_AUC, paste(data_location2, "ordered_AUC.RDS", sep = ""))
+
+
+```
+
+Merging all data to be analyzed into one dataframe
+
+```{r}
+
+library(tidyverse)
+library(readxl)
+library(tidytext)
+library(vegan)
+library(ranger)
+#data_location2 <- "C:/Users/mafekete/Dropbox/fungi/results_inoculation21022025_time1/"
+
+#location <- "C:/Users/mafekete/Dropbox/fungi/"
+
+# All methods deliver similar results, however after comparing them all visually and in pca the best ones were
+
+
+
+# --------------- Loading data Hypholoma -----------------------------------
+
+#folder <- "results_inoculation21022025_time1//"
+
+Hf_T2_SF <- readRDS(paste(data_location2,"all_data_scaled.RDS", sep = ""))
+
+Hf_T2_SF_mst <- readRDS(paste(data_location2,"all_data.RDS", sep = ""))
+Hf_T2_SF_mst <- Hf_T2_SF_mst[which(Hf_T2_SF_mst$Network == "Resistance_MST"),
+                             c("name_col", "summary_Geff",
+                               "Geff_no_c",
+                               "Root_eff",                         
+                               "Reff_tip",
+                               "accessibility_skewness",           
+                               "length_skewness_tip",               "length_skewness_main",             
+                               "volume_skewness_tip",               "volume_skewness_main",             
+                               "width_skewness_tip",                "width_skewness_main",              
+                               "Hyphal_tip_width_median",           "Hyphal_main_width_median",         
+                               "Hyphal_main_width_mean", "Hyphal_main_length_median",
+                               "Hyphal_tip_length_median")]
+names(Hf_T2_SF_mst)[-1]  <- paste(names(Hf_T2_SF_mst)[-1], "_of_MST", sep = "")
+
+Hf_T2_SF <- left_join(Hf_T2_SF, Hf_T2_SF_mst)
+
+# adding new "colony" data also stored in the folder
+temp = list.files(path = paste(data_location2, sep = ""), pattern = "*-results.xlsx")
+temp <- paste(data_location2, temp,sep = "")
+
+# For this I need to specify that the data is contained int an excel sheet called
+# "Graph"
+colony <- bind_rows(
+  lapply(temp,function(x){read_excel(x,sheet = "Graph")} )); names(colony)[1] <- "name_col"
+
+colony <- unique(colony[, c("name_col", "colony_Circularity")])
+colony$name_col <- gsub("_shiny_", "_", colony$name_col)
+Hf_T2_SF <- left_join(Hf_T2_SF, colony)
+
+# Adding the new AUC measures
+Carlos_random_rob <- readRDS(paste(data_location2,"Random_AUC.RDS", sep = ""))
+names(Carlos_random_rob)[-1] <- paste("random_", names(Carlos_random_rob)[-1], sep = "")
+names(Carlos_random_rob)[1]  <- "name_col"
+
+Carlos_spatial_rob <- readRDS(paste(data_location2,"Spatial_AUC.RDS", sep = ""))
+names(Carlos_spatial_rob)[-1] <- paste("spatial_", names(Carlos_random_rob)[-1], sep = "")
+names(Carlos_spatial_rob)[1]  <- "name_col"
+
+Carlos_ordered_rob <- readRDS(paste(data_location2,"ordered_AUC.RDS", sep = ""))
+names(Carlos_ordered_rob)[1]  <- "name_col"
+
+Carlos_rob <- 
+  left_join(left_join(Carlos_ordered_rob, Carlos_spatial_rob),
+            Carlos_random_rob)
+
+#names(Carlos_rob)[-1] <- paste("CA_", names(Carlos_rob)[-1], sep = "")
+
+Hf_T2_SF <- left_join(Hf_T2_SF,
+                      Carlos_rob); rm(Carlos_rob, Carlos_ordered_rob, Carlos_spatial_rob, Carlos_random_rob)
+
+#Hf_T2_SF$set_up <- gsub("Hf DD2//|//results//|processed data ", "", folder)
+
+
+# ------------------------------------------------------------------------------------------
+
+# on top the densities and the widht, angle and AUC
+library(vegan)
+library(tidyverse)
+
+all_data_scaled_c <- Hf_T2_SF
+
+
+
+all_data_scaled_c$Root_eff_a_scaled <- all_data_scaled_c$Root_eff/all_data_scaled_c$Mycelial_area
+all_data_scaled_c$Reff_tip_a_scaled <- all_data_scaled_c$Reff_tip/all_data_scaled_c$Mycelial_area
+
+
+all_data_scaled_c$Geff_MST_no_c <- all_data_scaled_c$Geff_no_c/all_data_scaled_c$Geff_no_c_of_MST
+all_data_scaled_a <- all_data_scaled_c
+
+saveRDS(all_data_scaled_a, paste(data_location2, "all_data_scaled_a.RDS", sep = ""))
+
+```
+
